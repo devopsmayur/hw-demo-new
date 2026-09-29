@@ -1,0 +1,103 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for the E-Drive inverter RTL demo repository.
+language: en-US
+tone_instructions: >-
+  Review like a senior ASIC design and ISO 26262 functional-safety engineer.
+  Be precise, cite rule IDs from docs/RTL_DESIGN_RULES.md, and state the
+  hardware consequence of each issue.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: false
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Verilator lints every changed .v / .sv file. It is enabled by default and
+  # listed here to make the intent explicit. NOTE: CodeRabbit skips Verilator
+  # if a GitHub Actions workflow in this repo already invokes Verilator.
+  tools:
+    verilator:
+      enabled: true
+
+  path_instructions:
+    - path: "rtl/**/*.sv"
+      instructions: |
+        Synthesizable SystemVerilog for an ASIL-D traction-inverter control
+        subsystem (sys_clk 200 MHz, adc_clk 80 MHz, asynchronous to each other).
+        Prioritise functional and safety defects over style:
+        - Shoot-through: can hs_o and ls_o of a leg be active together on ANY
+          path (reset, enable, fault, ASC safe state)? Do safe-state entries go
+          through the dead-time logic?
+        - CDC/RDC: asynchronous pins and cross-domain buses. Multi-bit
+          crossings must be Gray-coded or handshaked. Reuse rtl/cdc_sync.sv.
+        - FSMs: default branch to a safe state, illegal-state recovery (SEU),
+          no latches in always_comb.
+        - Arithmetic: signed/unsigned mixing, implicit truncation, and the
+          two's-complement most-negative value.
+        - Register interface: CTRL.LOCK coverage, W1C set-vs-clear priority,
+          fail-safe reset values.
+        - Assertions: flag any weakening of an existing a_* assertion.
+        - ECC: SEC-DED classification must use the overall parity bit.
+        For every issue give the concrete failing scenario (input sequence or
+        value) and a corrected code snippet.
+    - path: "rtl/**/*.vhd"
+      instructions: |
+        Legacy VHDL ported to this project. Check sensitivity lists
+        (simulation/synthesis mismatch), VHDL-2008 process (all), numeric_std
+        only, and verify CRC/checksum parameters against the cited standard,
+        including its check value. Check frame start / first-byte handling.
+    - path: "sw/**/*.h"
+      instructions: |
+        Bare-metal firmware register definitions. Cross-check every offset,
+        bit position and reset/ID value against rtl/apb_pwm_regs.sv and
+        docs/register_map.md. Flag read-modify-write on W1C registers.
+
+  pre_merge_checks:
+    issue_assessment:
+      mode: warning
+    custom_checks:
+      - name: "Register map documented (R-REG-04)"
+        mode: error
+        instructions: |
+          If the pull request adds, removes or changes any ADDR_* localparam,
+          register field, or reset value in rtl/apb_pwm_regs.sv, then
+          docs/register_map.md must be modified in the same pull request and
+          must list every register offset present in rtl/apb_pwm_regs.sv with
+          matching bit fields, access type and reset value.
+          Pass: no register-map change, or docs/register_map.md is updated
+          and consistent. Fail: register map changed in RTL but
+          docs/register_map.md is unchanged or inconsistent; list the
+          missing or mismatching registers.
+      - name: "FSM safe-state recovery (R-FSM-01)"
+        mode: error
+        instructions: |
+          For every case statement on a state register (a variable of an enum
+          type or named *state*) in added or modified .sv/.v files:
+          Pass: the case has a default branch that assigns a documented safe
+          state. Fail: any such case without a default branch, or whose
+          default does not assign a safe state. Name file, line and state
+          variable for each failure.
+      - name: "Async inputs synchronized (R-CDC-01)"
+        mode: error
+        instructions: |
+          In added or modified RTL, identify input ports whose comments or
+          names describe them as asynchronous (pad, pin, open drain, other
+          clock domain, *_async, desat, fault pin).
+          Pass: each such input is only used after passing through
+          cdc_sync (or an equivalent >= 2-flop synchronizer).
+          Fail: any such input used directly in combinational or next-state
+          logic. Name the port and the line where it is used.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - files: "docs/RTL_DESIGN_RULES.md"
+        applyTo: "rtl/**, sw/**"
